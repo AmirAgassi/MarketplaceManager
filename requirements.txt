@@ -1,0 +1,7 @@
+pandas
+openpyxl
+undetected-chromedriver
+selenium
+python-dotenv
+openai
+windows-curses
