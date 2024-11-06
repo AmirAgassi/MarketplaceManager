@@ -22,13 +22,16 @@ class ListingManager:
             # save to database
             self.db.add_listing(
                 item_code=item_data.get('item_code'),
-                description=content['description']
+                title=content['title'],
+                description=content['description'],
+                price=item_data.get('price', 0.0)
             )
             
             # placeholder for creating listing
             print(f"Creating listing for {item_data.get('item_code')}")
             print(f"Title: {content['title']}")
             print(f"Description: {content['description']}")
+            print(f"Price: ${item_data.get('price', 0.0):.2f}")
             
         except Exception as e:
             print(f"Error creating listing: {str(e)}")

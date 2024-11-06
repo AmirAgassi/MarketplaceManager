@@ -218,7 +218,8 @@ class MenuUI:
             # column headers
             stdscr.addstr(2, 2, "[ ]", curses.A_BOLD)  # checkbox
             stdscr.addstr(2, 7, "Item Code", curses.A_BOLD)
-            stdscr.addstr(2, 20, "Description", curses.A_BOLD)
+            stdscr.addstr(2, 20, "Title", curses.A_BOLD)
+            stdscr.addstr(2, 45, "Description", curses.A_BOLD)
             stdscr.addstr(2, width - 25, "Price", curses.A_BOLD)
             stdscr.addstr(2, width - 15, "Created", curses.A_BOLD)
             stdscr.hline(3, 0, '-', width)
@@ -230,7 +231,7 @@ class MenuUI:
                 total_items = cursor.fetchone()[0]
                 
                 cursor.execute("""
-                    SELECT item_code, description, price, created_at 
+                    SELECT item_code, title, description, price, created_at 
                     FROM listings 
                     WHERE status = 'pending'
                     ORDER BY created_at DESC
@@ -242,19 +243,26 @@ class MenuUI:
             for idx, listing in enumerate(listings):
                 y_pos = idx + 4
                 if y_pos < height - 3:
-                    # checkbox
+                    # arrow and checkbox
                     checkbox = "[X]" if listing[0] in selected_items else "[ ]"
                     if idx == current_selection:
+                        stdscr.addstr(y_pos, 0, "-> ", curses.A_BOLD | curses.color_pair(1))
                         stdscr.addstr(y_pos, 2, checkbox, curses.A_BOLD | curses.color_pair(1))
                     else:
                         stdscr.addstr(y_pos, 2, checkbox)
                     
                     # listing details
-                    created_date = datetime.strptime(listing[3], '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d')
-                    price_str = f"${listing[2]:.2f}" if listing[2] else "N/A"
+                    created_date = datetime.strptime(listing[4], '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d')
+                    price_str = f"${listing[3]:.2f}" if listing[3] else "N/A"
                     
-                    stdscr.addstr(y_pos, 7, f"{listing[0][:10]}")
-                    stdscr.addstr(y_pos, 20, f"{listing[1][:40]}...")
+                    # truncate strings to fit
+                    item_code = listing[0][:10]
+                    title = listing[1][:20] + "..." if len(listing[1]) > 20 else listing[1]
+                    description = listing[2][:30] + "..." if len(listing[2]) > 30 else listing[2]
+                    
+                    stdscr.addstr(y_pos, 7, item_code)
+                    stdscr.addstr(y_pos, 20, title)
+                    stdscr.addstr(y_pos, 45, description)
                     stdscr.addstr(y_pos, width - 25, price_str)
                     stdscr.addstr(y_pos, width - 15, created_date)
             
@@ -263,7 +271,7 @@ class MenuUI:
             selected_count = len(selected_items)
             status_line = f"Selected: {selected_count} | Page {page + 1}/{(total_items + items_per_page - 1) // items_per_page}"
             stdscr.addstr(height-2, 2, status_line, curses.color_pair(3))
-            stdscr.addstr(height-1, 2, "↑/↓: Navigate | Space: Select | Enter: Post Selected | a: Select All | q: Back", 
+            stdscr.addstr(height-1, 2, "↑/↓: Navigate | ←/→: Change Page | Space: Select | Enter: Post | a: Select All | q: Back", 
                          curses.color_pair(4))
             
             # handle input
@@ -271,16 +279,23 @@ class MenuUI:
             
             if key == ord('q'):
                 break
-            elif key == curses.KEY_UP:
-                if current_selection > 0:
-                    current_selection -= 1
-                elif page > 0:  # if at top of page, go to previous page
+            elif key in [curses.KEY_UP, curses.KEY_DOWN, curses.KEY_LEFT, curses.KEY_RIGHT]:
+                if key == curses.KEY_UP:
+                    if current_selection > 0:
+                        current_selection -= 1
+                    elif page > 0:  # if at top of page, go to previous page
+                        page -= 1
+                        current_selection = items_per_page - 1
+                elif key == curses.KEY_DOWN:
+                    if current_selection < len(listings) - 1:
+                        current_selection += 1
+                    elif (page + 1) * items_per_page < total_items:  # if at bottom of page, go to next page
+                        page += 1
+                        current_selection = 0
+                elif key == curses.KEY_LEFT and page > 0:  # previous page
                     page -= 1
-                    current_selection = items_per_page - 1
-            elif key == curses.KEY_DOWN:
-                if current_selection < len(listings) - 1:
-                    current_selection += 1
-                elif (page + 1) * items_per_page < total_items:  # if at bottom of page, go to next page
+                    current_selection = 0
+                elif key == curses.KEY_RIGHT and (page + 1) * items_per_page < total_items:  # next page
                     page += 1
                     current_selection = 0
             elif key == ord(' '):  # Space to toggle selection
@@ -290,6 +305,9 @@ class MenuUI:
                         selected_items.remove(item_code)
                     else:
                         selected_items.add(item_code)
+                    # move to next item after selection
+                    if current_selection < len(listings) - 1:
+                        current_selection += 1
             elif key == ord('a'):  # Select all on current page
                 for listing in listings:
                     selected_items.add(listing[0])

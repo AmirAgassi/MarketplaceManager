@@ -19,6 +19,7 @@ class DatabaseHandler:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS listings (
                     item_code TEXT PRIMARY KEY,
+                    title TEXT,
                     description TEXT,
                     price REAL,
                     status TEXT DEFAULT 'pending',
@@ -34,13 +35,13 @@ class DatabaseHandler:
             cursor.execute("SELECT item_code FROM listings")
             return [row[0] for row in cursor.fetchall()]
     
-    def add_listing(self, item_code: str, description: str):
+    def add_listing(self, item_code: str, title: str, description: str, price: float):
         """add new listing to database"""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO listings (item_code, description) VALUES (?, ?)",
-                (item_code, description)
+                "INSERT INTO listings (item_code, title, description, price) VALUES (?, ?, ?, ?)",
+                (item_code, title, description, price)
             )
             conn.commit()
     
