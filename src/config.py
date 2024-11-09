@@ -11,10 +11,13 @@ class Config:
     DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
     
     # marketplace settings
-    MARKETPLACE_URL = "https://www.facebook.com/marketplace"
+    MARKETPLACE_URL = "https://www.facebook.com/marketplace/create/item"
     
     # browser settings
     HEADLESS = False
+    BROWSER_TIMEOUT = 30
+    BROWSER_WAIT_TIME = 5
+    USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'chrome_profile')
     
     # listing settings
     MAX_TITLE_LENGTH = 100

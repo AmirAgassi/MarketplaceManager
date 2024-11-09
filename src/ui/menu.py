@@ -4,6 +4,9 @@ from typing import List, Dict, Callable
 from datetime import datetime
 from ..utils.db_handler import DatabaseHandler
 from ..marketplace_bot import MarketplaceBot
+from ..browser_controller import BrowserController
+import time
+from ..utils.progress_bar import ProgressBar
 
 class MenuUI:
     def __init__(self):
@@ -340,21 +343,162 @@ class MenuUI:
                 return False
 
     def post_selected_listings(self, stdscr, selected_items: set):
+        start_time = time.time()
+        success_count = 0
+        failed_count = 0
+        
         try:
+            stdscr.clear()
+            stdscr.refresh()
+            
+            # setup progress bar
+            progress = ProgressBar(stdscr)
+            
+            # show controls
+            height, width = stdscr.getmaxyx()
+            stdscr.addstr(height-1, 2, "Controls: [q] Quit", curses.color_pair(4))
+            stdscr.refresh()
+            
+            # get listings to post first to know total step count
             with self.db.get_connection() as conn:
                 cursor = conn.cursor()
-                cursor.execute(
-                    "UPDATE listings SET status = 'posted' WHERE item_code IN ({})".format(
-                        ','.join('?' * len(selected_items))
-                    ), 
+                cursor.execute("""
+                    SELECT item_code, title, description, price 
+                    FROM listings 
+                    WHERE item_code IN ({})
+                """.format(','.join('?' * len(selected_items))), 
                     tuple(selected_items)
                 )
-                conn.commit()
-                count = cursor.rowcount
+                listings_to_post = cursor.fetchall()
+
+            # define all steps upfront
+            init_step = progress.add_step("Initializing browser")
+            nav_step = progress.add_step("Navigating to Facebook Marketplace")
+            login_step = progress.add_step("Checking login status")
+            fetch_step = progress.add_step("Fetching listings from database")
+
+            # add posting steps immediately
+            posting_steps = []
+            for listing in listings_to_post:
+                step = progress.add_step(f"Posting listing: {listing[0]}")
+                posting_steps.append(step)
             
-            self.show_message(stdscr, f"Successfully posted {count} listings!")
+            # initialize browser
+            progress.start_step(init_step)
+            browser = BrowserController()
+            browser.set_progress(progress)  # set progress instance
+            if not browser.initialize_driver():
+                progress.complete_step(init_step, success=False)
+                raise Exception("failed to initialize browser")
+            progress.complete_step(init_step)
+            
+            # navigate to marketplace
+            progress.start_step(nav_step)
+            if not browser.navigate_to_marketplace():
+                progress.complete_step(nav_step, success=False)
+                raise Exception("failed to access marketplace")
+            progress.complete_step(nav_step)
+            
+            # check login status and wait if needed
+            progress.start_step(login_step)
+            progress.set_waiting(login_step)
+
+            # check initial login status
+            if not browser.check_login_status():
+                while browser.driver.find_elements("id", "login_popup_cta_form"):
+                    key = stdscr.getch()
+                    if key == ord('q'):
+                        raise KeyboardInterrupt
+                    time.sleep(0.5)
+                
+            progress.complete_step(login_step)
+            
+            # process each listing
+            for i, (step, listing) in enumerate(zip(posting_steps, listings_to_post)):
+                try:
+                    # navigate back to marketplace for all posts except the first one
+                    if i > 0:
+                        progress.add_debug("navigating back to marketplace...")
+                        if not browser.navigate_to_marketplace():
+                            raise Exception("failed to navigate back to marketplace")
+                        progress.add_debug("navigation successful")
+                    
+                    # start the posting step
+                    progress.start_step(step)
+                    progress.add_debug(f"starting to post listing {listing[0]}...")
+                    
+                    if not browser.post_listing(
+                        title=listing[1],
+                        description=listing[2],
+                        price=listing[3],
+                        item_code=listing[0],
+                        progress=progress
+                    ):
+                        raise Exception("failed to post listing")
+                    
+                    progress.complete_step(step)
+                    success_count += 1
+                    
+                except Exception as e:
+                    progress.complete_step(step, success=False)
+                    failed_count += 1
+            
+        except KeyboardInterrupt:
+            if 'progress' in locals():
+                current_step = progress.step_manager.current_step
+                if current_step:
+                    progress.complete_step(current_step, success=False)
         except Exception as e:
-            self.show_message(stdscr, f"Error posting listings: {str(e)}", error=True)
+            if 'progress' in locals():
+                current_step = progress.step_manager.current_step
+                if current_step:
+                    progress.complete_step(current_step, success=False)
+            raise
+        finally:
+            if 'progress' in locals():
+                progress.running = False
+            if 'browser' in locals():
+                browser.close()
+            
+            # show summary
+            elapsed_time = time.time() - start_time
+            total_count = len(selected_items)
+            
+            stdscr.clear()
+            height, width = stdscr.getmaxyx()
+            
+            # format summary message
+            summary = [
+                "Posting Summary",
+                "---------------",
+                f"Total listings: {total_count}",
+                f"Successfully posted: {success_count}",
+                f"Failed: {failed_count}",
+                f"Time elapsed: {elapsed_time:.1f} seconds",
+                "",
+                "Press any key to continue..."
+            ]
+            
+            # display centered summary
+            start_y = (height - len(summary)) // 2
+            for i, line in enumerate(summary):
+                x = (width - len(line)) // 2
+                if i == 0:  # title
+                    stdscr.addstr(start_y + i, x, line, curses.color_pair(3) | curses.A_BOLD)
+                elif i == 2:  # total count
+                    stdscr.addstr(start_y + i, x, line, curses.color_pair(3))
+                elif i == 3:  # success count
+                    stdscr.addstr(start_y + i, x, line, curses.color_pair(1))
+                elif i == 4:  # failed count
+                    stdscr.addstr(start_y + i, x, line, curses.color_pair(2))
+                elif i == len(summary) - 1:  # press any key
+                    stdscr.addstr(start_y + i, x, line, curses.color_pair(4))
+                else:
+                    stdscr.addstr(start_y + i, x, line)
+            
+            stdscr.refresh()
+            stdscr.nodelay(0)  # restore blocking mode
+            stdscr.getch()  # wait for key press
     
     def show_message(self, stdscr, message: str, error: bool = False):
         """show a message box with a message"""
@@ -387,3 +531,20 @@ class MenuUI:
             
         except Exception as e:
             self.show_message(stdscr, f"Error: {str(e)}", error=True)
+
+    def handle_posting_controls(self, stdscr, progress):
+        """handle posting control keys"""
+        key = stdscr.getch()
+        if key == -1:  # no key pressed
+            return None
+        
+        if key == ord('p'):  # pause/play
+            if progress.status == "running":
+                progress.update(progress.description, status="paused")
+                return "paused"
+            elif progress.status == "paused":
+                progress.update(progress.description, status="running")
+                return "running"
+        elif key == ord('q'):  # quit
+            return "quit"
+        return None

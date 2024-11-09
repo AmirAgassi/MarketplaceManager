@@ -50,10 +50,13 @@ class ExcelHandler:
             
             # debug print
             print("\nProcessed listings:")
-            for listing in listings[:2]:  # show first 2 listings
+            for listing in listings[:6]:
                 print(f"\nListing found:")
                 for key, value in listing.items():
-                    print(f"{key}: {value}")
+                    if isinstance(value, str) and len(value) > 90:
+                        print(f"{key}: {value[:90]}...")
+                    else:
+                        print(f"{key}: {value}")
             
             return listings
             
@@ -72,54 +75,52 @@ class ExcelHandler:
             wb = openpyxl.load_workbook(self.file_path)
             ws = wb.active
             
-            # get positions of all images
+            item_codes = []
+            for row in ws.iter_rows(min_col=3, max_col=3):  # column C
+                value = row[0].value
+                if value and str(value).strip() != 'ITEM CODE':
+                    item_codes.append(value)
+            
+            # debug print item codes
+            print("\nItem Codes in order:")
+            print(item_codes)
+            
+            # get image positions
             image_positions = []
             for idx, image in enumerate(ws._images):
                 if hasattr(image, 'anchor'):
-                    top_row = image.anchor._from.row
-                    left_col = image.anchor._from.col
-                    image_positions.append((top_row, left_col, idx + 1))
+                    row = image.anchor._from.row
+                    col = image.anchor._from.col
+                    image_positions.append((row, col, idx))
             
-            # sort by row then column
-            image_positions.sort()
-            position_map = {old_idx: new_idx for new_idx, (_, _, old_idx) in enumerate(image_positions, 1)}
+            # sort by row to maintain spreadsheet order
+            image_positions.sort(key=lambda x: x[0])
             
-            # create row to image path mapping
-            row_to_image = {}
+            # debug print positions
+            print("\nImage Positions (row, col, idx):")
+            print(image_positions)
             
-            # extract images with correct order
+            # extract images
             with ZipFile(self.file_path) as archive:
-                image_files = [f for f in archive.namelist() 
-                             if re.match(r'xl/media/image\d+\.(png|jpeg|jpg)', f, re.I)]
+                image_files = sorted(
+                    [f for f in archive.namelist() if re.match(r'xl/media/image\d+\.(png|jpeg|jpg)', f, re.I)],
+                    key=lambda x: int(re.search(r'image(\d+)', x).group(1))
+                )
                 
-                def get_image_number(path):
-                    match = re.search(r'image(\d+)', path)
-                    return int(match.group(1)) if match else 0
+                # create mapping of row to image path
+                row_to_image = {}
+                for (row, col, _), item_code, image_path in zip(image_positions, item_codes, image_files):
+                    ext = os.path.splitext(image_path)[1]
+                    new_path = images_dir / f"image_{item_code}{ext}"
+                    
+                    # extract image
+                    with archive.open(image_path) as source, open(new_path, 'wb') as target:
+                        target.write(source.read())
+                    
+                    row_to_image[row] = str(new_path)
+                    
+                return row_to_image
                 
-                image_files.sort(key=get_image_number)
-                
-                for idx, image_path in enumerate(image_files, 1):
-                    try:
-                        new_idx = position_map.get(idx, idx)
-                        row_num = image_positions[new_idx-1][0]  # get row number for this image
-                        
-                        ext = os.path.splitext(image_path)[1]
-                        new_filename = f"image_{new_idx:03d}{ext}"
-                        new_path = images_dir / new_filename
-                        
-                        # extract image
-                        with archive.open(image_path) as source, open(new_path, 'wb') as target:
-                            target.write(source.read())
-                        
-                        # map row number to image path
-                        row_to_image[row_num] = str(new_path)
-                        
-                    except Exception as img_error:
-                        print(f"Warning: Error extracting image {idx}: {str(img_error)}")
-            
-            wb.close()
-            return row_to_image
-            
         except Exception as e:
-            print(f"Warning: Error processing images: {str(e)}")
-            return {}  # return empty mapping if image extraction fails
+            print(f"Error extracting images: {str(e)}")
+            return {}
